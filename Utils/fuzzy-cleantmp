@@ -1,0 +1,43 @@
+#!/usr/local/bin/perl
+#
+# <@LICENSE>
+# Licensed to the Apache Software Foundation (ASF) under one or more
+# contributor license agreements.  See the NOTICE file distributed with
+# this work for additional information regarding copyright ownership.
+# The ASF licenses this file to you under the Apache License, Version 2.0
+# (the "License"); you may not use this file except in compliance with
+# the License.  You may obtain a copy of the License at:
+# 
+#     http://www.apache.org/licenses/LICENSE-2.0
+# 
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# </@LICENSE>
+
+opendir TMP, "/tmp" or die "Cannot read /tmp\n";
+my @files = grep {m/spamassassin/} readdir TMP;
+closedir TMP;
+
+my $hours = shift @ARGV || 12;
+my $limit = time - ($hours * 3600);
+printf "Removing tempfiles older than %s\n",scalar(localtime($limit));
+foreach my $d (@files) {
+    my $df = "/tmp/" . $d;
+    next unless -d $df;
+    my @stat = stat $df;
+    next if $stat[9] > $limit;
+    printf "$d -> %s\n",scalar(localtime($stat[9]));
+    opendir TMP, $df or die "Cannot read $df\n";
+    my @dfs = readdir TMP;
+    closedir TMP;
+    foreach my $f (@dfs) {
+        next if $f eq '.';
+        next if $f eq '..';
+        my $fn = sprintf "%s/%s",$df,$f;
+        unlink $fn;
+    }
+    rmdir $df;
+}

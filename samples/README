@@ -1,0 +1,71 @@
+These eml files are sample spam emails to test your installation of FuzzyOCR.
+
+Use spamassassin -t < samplefile.eml to test :)
+
+ATTENTION: If FuzzyOcr does not trigger on one of the messages, then make sure you have the focr_autodisable_score set high enough.
+Otherwise, if a message gets enough hits by SA, FuzzyOcr will not scan it. This is generally depending on your other SA rules.
+
+
+ocr-gif.eml: Contains a corrupted gif image, additionally I changed the content-type to jpeg, so the output should show:
+
+ 1.5 FUZZY_OCR_WRONG_CTYPE  BODY: Mail contains an image with wrong
+                            content-type set
+                            Image has format "GIF" but content-type is
+                            "image/jpeg"
+ 2.5 FUZZY_OCR_CORRUPT_IMG  BODY: Mail contains a corrupted image
+                            Corrupt image: GIF-LIB error: Image is
+                            defective, decoding aborted.
+ 8.8 FUZZY_OCR              BODY: Mail contains an image with common spam text inside
+                            Words found:
+                            "target" in 1 lines
+                            "service" in 1 lines
+                            "stock" in 2 lines
+                            "price" in 2 lines
+                            "company" in 1 lines
+                            "recommendation" in 1 lines
+                            (12 word occurrences found)
+
+ocr-animated.eml: Contains an animated gif. If all deanimation routines are working properly on your system, the output should contain:
+
+ 6.5 FUZZY_OCR              BODY: Mail contains an image with common spam text inside
+                            Words found:
+                            "price" in 1 lines
+                            "company" in 1 lines
+                            "alert" in 1 lines
+                            "news" in 1 lines
+
+ocr-obfuscated.eml: Contains an obfuscated gif image, to test the ocrad-decolorize scansets. If you want to test this scanset, either set the minimal_scanset option to 0 or put the decolorize scanset temporarily at the beginning of the scansets file. The output should be:
+
+ 5.9 FUZZY_OCR              BODY: Mail contains an image with common spam text inside
+                            Words found:
+                            "target" in 1 lines
+                            "profit" in 1 lines
+                            "trade" in 1 lines
+                            (4.5 word occurrences found)
+
+
+ocr-jpg.eml: Contains a jpeg file. Output should show:
+
+ 5.9 FUZZY_OCR              BODY: Mail contains an image with common spam text inside
+                            Words found:
+                            "levitra" in 1 lines
+                            "viagra" in 2 lines
+                            (4.5 word occurrences found)
+
+
+ocr-png.eml: Contains a png file. Output should show:
+
+  14 FUZZY_OCR              BODY: Mail contains an image with common spam text inside
+                            Words found:
+                            "buy" in 1 lines
+                            "target" in 2 lines
+                            "service" in 1 lines
+                            "stock" in 1 lines
+                            "investor" in 1 lines
+                            "price" in 3 lines
+                            "company" in 2 lines
+                            "trade" in 1 lines
+                            "software" in 1 lines
+                            "recommendation" in 1 lines
+                            "news" in 3 lines
+                            (25.5 word occurrences found)

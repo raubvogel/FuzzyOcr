@@ -1,0 +1,297 @@
+#!/usr/local/bin/perl
+#
+# <@LICENSE>
+# Licensed to the Apache Software Foundation (ASF) under one or more
+# contributor license agreements.  See the NOTICE file distributed with
+# this work for additional information regarding copyright ownership.
+# The ASF licenses this file to you under the Apache License, Version 2.0
+# (the "License"); you may not use this file except in compliance with
+# the License.  You may obtain a copy of the License at:
+# 
+#     http://www.apache.org/licenses/LICENSE-2.0
+# 
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# </@LICENSE>
+
+use Getopt::Long;
+use DBI;
+use MLDBM qw(DB_File Storable);
+my %Files = (
+    db_hash => '/etc/mail/spamassassin/FuzzyOcr.db',
+    db_safe => '/etc/mail/spamassassin/FuzzyOcr.safe.db',
+    );  
+
+my %MySQL = (
+     db   => 'FuzzyOcr'
+    ,hash => 'Hash'
+    ,safe => 'Safe'
+    ,user => 'fuzzyocr'
+    ,pass => 'fuzzyocr'
+    ,host => 'localhost'
+    ,port => 3306
+);
+
+# defaults
+my $cfgfile = "/etc/mail/spamassassin/FuzzyOcr.cf";
+my %App;
+my @bin_utils = qw/pamfile ppmhist jpegtopnm giftopnm pngtopnm bmptopnm/;
+
+my $delete = 0;
+my $verbose = 0;
+my $learn_ham = 0;
+my $learn_spam = 0;
+my $score;
+GetOptions(
+    'verbose' => \$verbose,
+    'delete'  => \$delete,
+    'config=s' => \$cfgfile,
+    'score=f' => \$score,
+    'learn-ham' => \$learn_ham,
+    'learn-spam' => \$learn_spam,
+);
+
+unless (@ARGV) {
+    print "Usage: fuzzy-find.pl [Options] (imagehash|imagefile) \n";
+    print "\n";
+    print "Available options:\n";
+    print "--config=s   Specify location of FuzzyOcr.cf\n";
+    print "             Default: /etc/mail/spamassassin/FuzzyOcr.cf\n";
+    print "--delete     Removes the hash from the database\n";
+    print "--learn-ham  Add the hash as ham to the database\n";
+    print "--learn-spam Add the hash as spam to the database\n";
+    print "--score=i    Score to use when adding ham/spam\n";
+    print "--verbose    Show more informations\n";
+    print "\n";
+    exit 1;
+}
+
+# Setup default score
+unless (defined $score) {
+    $score = $learn_ham ? 10 : 0;
+}
+
+# Read custom paths from FuzzyOcr.cf
+my $app_path = q(/usr/local/netpbm/bin:/usr/local/bin:/usr/bin);
+open CONFIG, "< $cfgfile" or warn "Can't read configuration file, using defaults...\n";
+
+while (<CONFIG>) {
+    chomp;
+    if ($_ =~ m/^focr_bin_(\w+) (.+)/) {
+        $App{$1} = $2;
+        printf "Found custom path \"$2\" for application \"$1\"\n" if $verbose;
+    }
+    if ($_ =~ m/^focr_path_bin (.+)/) {
+        $app_path = $1;
+        printf "Found new path: \"$1\"\n" if $verbose;
+    }
+    if ($_ =~ m/^focr_enable_image_hashing (\d)/) {
+        $App{hashing_type} = $1;
+        printf "Found DB Hashing\n" if ($verbose and $1 == 2);
+        printf "Found MySQL Hashing\n" if ($verbose and $1 == 3);
+    }
+    if ($_ =~ m/^focr_mysql_(\w+) (.+)/) {
+        $MySQL{$1} = $2;
+        printf "Found MySQL option $1 => '$2'\n" if $verbose;
+    }
+    if ($_ =~ m/^focr_threshold_max_hash (.+)/) {
+        $App{max_hash} = $1;
+        printf "Updated Thresold{max_hash} = $1\n" if $verbose;
+    }
+}
+
+close CONFIG;
+
+# make shure we have this threshold set
+$App{max_hash} = 5 unless defined $App{max_hash};
+
+# search path for bin_util unless already specified in configuration file
+foreach my $app (@bin_utils) {
+    next if defined $App{$app};
+    foreach my $d (split(':',$app_path)) {
+        if (-x "$d/$app") {
+            $App{$app} = "$d/$app";
+            last;
+        }
+    }
+}
+
+sub get_ddb {
+    my %dopts = ( AutoCommit => 1 );
+    my $dsn = "dbi:mysql:database=".$MySQL{db};
+    if (defined $MySQL{socket}) {
+        $dsn .= ";mysql_socket=$MySQL{socket}";
+    } else {
+        $dsn .= ";host=$MySQL{host}";
+        $dns .= ";port=$MySQL{port}" unless $MySQL{port} == 3306;
+    }
+    printf "Connecting to: $dsn\n" if $verbose;
+    return DBI->connect($dsn,$MySQL{user},$MySQL{pass},\%dopts);
+}
+
+while (@ARGV) {
+    my $file = shift @ARGV;
+    my @data = ();
+    if ($file =~ m/(\d+):(\d+):(\d+):(\d+)/) {
+        push @data, $1,$2,$3,$4;
+    } elsif ($file eq ':::0') {
+        $key = $file;
+        $data[3] = 0;
+    } else {
+        next unless -r $file;
+    }
+    my $key = '';
+    my $ctype = '';
+    my $ftype = 0;
+    unless (@data) {
+        my $app;
+        if (($file =~ m/\.jpg$/i) or ($file =~ m/\.jpeg$/i)) {
+            $app = $App{jpegtopnm};
+            $ctype = "image/jpeg";
+            $ftype = 2;
+        } elsif ($file =~ m/\.png$/i) {
+            $app = $App{pngtopnm};
+            $ctype = "image/png";
+            $ftype = 3;
+        } elsif ($file =~ m/\.bmp$/i) {
+            $ctype = "image/bmp";
+            $app = $App{bmptopnm};
+            $ftype = 4;
+        } elsif ($file =~ m/\.tiff?$/i) {
+            $app = $App{tifftopnm};
+            $ctype = "image/tiff";
+            $ftype = 5;
+        } elsif ($file =~ m/\.gif$/i) {
+            $app = $App{giftopnm};
+            $ctype = "image/gif";
+            $ftype = 1;
+        } elsif ($file =~ m/\.pnm$/i) {
+            $app = '/bin/cat';
+            $ctype = "image/pnm";
+        } else {
+            print "Unknown extension given in \"$file\", aborting...\n";
+            exit 1;
+        }
+        my @hist = `$app $file 2>/dev/null |$App{ppmhist} -noheader -`;
+        my @res = `$app $file 2>/dev/null |$App{pamfile} -`;
+        my ($h,$w) = (0,0);
+        if ($res[0] =~ m/(\d+) by (\d+)/) {
+            $w = $1; $h = $2;
+            printf "Found ($h,$w)\n" if $verbose
+        }
+        my $c = scalar(@hist); my $cnt = 0;
+        printf "Colors: %d\n",$c if $verbose;
+        push @data, (stat($file))[7],$h,$w,$c;
+        foreach (@hist) {
+            $_ =~ s/ +/ /g;
+            my @d = split(' ',$_);
+            $hash .= sprintf("::%d:%d:%d:%d:%d",@d);
+            last if ($cnt++ ge $App{max_hash});
+        }
+        $key = substr($hash,2);
+    }
+    printf "Img = %9d %dx%dx%d\n",@data;
+    printf "key = <$key>\n" if ($key);
+    if ($learn_spam || $learn_ham) {
+        if ($App{hashing_type} == 2) {
+            my %DB;
+            my $ff = $learn_spam ? 'db_hash' : 'db_safe';
+            my $dfscore = $learn_spam ? 5 : -5;
+            $score = $score ? $score : $dfscore;
+            tie %DB, 'MLDBM', $Files{$ff} or die "Can't open $ff";
+            print "Adding key to database...\n";
+            if (defined $key) {
+                my $dbm = $DB{$key};
+                $dbm->{fname} = $file;
+                $dbm->{ctype} = $ctype;
+                $dbm->{dinfo} = "Manually added to the database\n";
+                $dbm->{basic} = join(':', @data);
+                $dbm->{score} = $score;
+                $dbm->{input} =
+                $dbm->{check} = time;
+                $dbm->{match} = $learn_spam ? 0 : 1;
+                $DB{$key} = $dbm;
+            }
+            untie %DB;
+            exit 0;
+        } elsif ($App{hashing_type} == 3) {
+            my $ddb = get_ddb();
+            if ($ddb) {
+                my $now = time;
+                my $tab = $learn_spam ? 'hash' : 'safe';
+                my $sql = "INSERT INTO $MySQL{$tab} VALUES ('" . $key
+                    . "','" . join(':',@data)
+                    . "','" . $file
+                    . "','" . $ctype
+                    . "','" . $ftype
+                    . "','" . ($learn_spam ? 0 : 1)
+                    . "','" . $now
+                    . "','" . $now
+                    . "','" . $score
+                    . "','" . "Manually added to the database\n" . "')";
+                $ddb->do($sql);
+                $ddb->disconnect;
+            } else {
+                printf "Cannot connect to $dsn\n";
+                exit 1;
+            }
+            exit 0;
+        }
+    } else {
+        if ($App{hashing_type} == 2) {
+            foreach my $ff (keys %Files) {
+                my %DB;
+                tie %DB, 'MLDBM', $Files{$ff} or next;
+                printf "Searching $Files{$ff}...\n";
+                foreach my $kk (keys %DB) {
+                    my $db = $DB{$kk};
+                    my @dd = split('::',$kk);
+                    shift @dd if ($dd[0] !~ m/:/);
+                    my $dd = join('::',@dd);
+                    if ($key eq '') {
+                        next unless ($db->{basic} eq join(':',@data));
+                    } else {
+                        next unless ($dd eq $key);
+                    }
+                    printf "%s HASH\n",($delete)?'Removing':'Found';
+                    if ($delete) {
+                        delete $DB{$kk};
+                    } else {
+                        printf "ImageInfo  : %9d:%d:%d:%d\n",split(':',$db->{basic});
+                        printf "Matched    : %4d Time(s)\n",$db->{match};
+                        printf "Calc.Score : %9.3f\n",$db->{score};
+                        printf "in DB since: %s\n",scalar(localtime($db->{input}));
+                        printf "Last Match : %s\n",scalar(localtime($db->{check}));
+                    }
+                }
+                untie %DB;
+            }
+        } elsif ($App{hashing_type} == 3) {
+            my $ddb = get_ddb();
+            if ($ddb) {
+                foreach my $ff (sort keys %Files) {
+                    my $tab = $ff; $tab =~ s/db_//;
+                    my $sql;
+                    if ($delete) {
+                        $sql = "DELETE FROM $MySQL{$tab} WHERE $MySQL{$tab}.key=?";
+                        $ddb->do($sql,undef,$key);
+                    } else {
+                        $sql = "SELECT * FROM $MySQL{$tab} WHERE $MySQL{$tab}.key=?";
+                        my @data = $ddb->selectrow_array($sql,undef,$key);
+                        if (scalar(@data)) {
+                            printf "ImageInfo  : %9d:%d:%d:%d\n",split(':',$data[1]);
+                            printf "Matched    : %4d Time(s)\n",$data[5];
+                            printf "Calc.Score : %9.3f\n",$data[8];
+                            printf "in DB since: %s\n",scalar(localtime($data[6]));
+                            printf "Last Match : %s\n",scalar(localtime($data[7]));
+                        }
+                    }
+                }
+                $ddb->disconnect;
+            }
+        }
+    }
+}

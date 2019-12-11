@@ -1,0 +1,28 @@
+fuzzy-utils
+
+If you have chosen to use the second hasing method (i.e. BerkeleyDB),
+then you also have the following at your disposal:
+
+fuzzy-find [--delete] hash|filename
+    This utility searches the DB files for the digest hash 
+    (from debug output) and prints out the information stored
+    in the DB file.  It is usefull to check how many times an
+    image has matched.  Also, with the optional --delete option,
+    you can remove the image from the DB file
+
+fuzzy-stats [days] [images]
+    This utility generates basic statistics taken from the DB files
+    regarding matches made [days] ago (0 by default == today) and 
+    shows some information of the top [images] (5 by default)
+
+fuzzy-cleantmp [hours]
+    If you decide to keep debug information of the work SpamAssassin
+    is doing, tempfiles tend to pile up.  This utility can help by 
+    removing 'old' files (older than [hours] hours (12 by default)).
+    This can safely be placed in CRON to keep your tempdir manageable
+
+TODO:
+    Right now, the names for each DB file is hardcoded. If you change
+    the default settings in FuzzyOcr.cf, you must update these utilities
+    so that they can process the 'right' files.
+

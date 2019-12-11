@@ -1,0 +1,88 @@
+#!/usr/local/bin/perl
+#
+# <@LICENSE>
+# Licensed to the Apache Software Foundation (ASF) under one or more
+# contributor license agreements.  See the NOTICE file distributed with
+# this work for additional information regarding copyright ownership.
+# The ASF licenses this file to you under the Apache License, Version 2.0
+# (the "License"); you may not use this file except in compliance with
+# the License.  You may obtain a copy of the License at:
+# 
+#     http://www.apache.org/licenses/LICENSE-2.0
+# 
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# </@LICENSE>
+
+use MLDBM qw(DB_File Storable);
+use POSIX qw(strftime);
+
+my %Files = (
+    db_hash => '/etc/mail/spamassassin/FuzzyOcr.db',
+    db_safe => '/etc/mail/spamassassin/FuzzyOcr.safe.db',
+    );
+
+my %Stats = ();
+
+#Days
+my $diff = shift @ARGV || 0;
+my $gctr = shift @ARGV || 5;
+my $time = time;
+my $days = int($time/86400) - $diff;
+
+foreach my $f (keys %Files) {
+    my %DB; my $err = 0;
+    tie %DB, 'MLDBM', $Files{$f} or ++$err;
+    next if $err; my @Top = ();
+    foreach my $k (keys %DB) {
+        my $db = $DB{$k};
+        $Stats{$f}{'images'}++;
+        $Stats{$f}{'score'} += $db->{score};
+        if (int($db->{check}/86400) == $days) {
+            $Stats{$f}{'today'}++;
+            $Stats{$f}{'score2'} += $db->{score};
+            my @basic = split(':',$db->{basic});
+            my $line;
+            if ($db->{score}) {
+                $line = sprintf "%5d Time(s) -> %8.3f %9d %dx%dx%d"
+                    ,$db->{match}+1,$db->{score},@basic;
+            } else {
+                $line = sprintf "%5d Time(s) -> %9d %dx%dx%d"
+                    ,$db->{match}+1,@basic;
+            }
+            foreach my $t (qw/fname ctype/) {
+                $line .= sprintf ' %s',$db->{$t} if defined $db->{$t};
+            }
+            push @Top,$line;
+        }
+        $Stats{$f}{'oldest'} = $db->{input}
+            unless $Stats{$f}{'oldest'};
+        $Stats{$f}{'oldest'} = $db->{input}
+            if ($Stats{$f}{'oldest'} > $db->{input});
+    }
+    my $s = $Stats{$f};
+    next unless $$s{'images'};
+
+    my $p1 = sprintf "%6.2f%%",$$s{'today'}/($$s{'images'}/100);
+    my $p2 = sprintf "%12.2f",$$s{'score'}/$$s{'images'} if ($$s{'images'});
+    my $p3 = sprintf "%12.2f",$$s{'score2'}/$$s{'today'} if ($$s{'today'});
+
+    my @stat = stat($Files{$f});
+    printf "\n<<%s>>\n",$f;
+    printf "File Size    : %9d Bytes\n",$stat[7];
+    printf "File Name    : %s\n",$Files{$f};
+    printf "Oldest Hash  : %s\n",scalar(localtime($$s{'oldest'}));
+    printf "Average Score: %s\n",$p2 if ($$s{'score'});
+    printf "Images in DB : %9d\n",$$s{'images'};
+    printf "\n%s\n",strftime("%a, %b %d, %Y",localtime($time));
+    printf "Matched   : %9d [%s]\n",$$s{'today'},$p1;
+    printf "Avg. Score: %s\n",$p3 if ($$s{'score2'});
+    my $count = $gctr;
+    foreach (reverse sort @Top) {
+        printf "%s\n",$_;
+        last if (--$count == 0);
+    }
+}
