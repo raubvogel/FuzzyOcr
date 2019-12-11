@@ -1,5 +1,5 @@
 # FuzzyOcr
-FuzzyOcr is a plugin for [SpamAssassin][1] written by Christian Holler and Jorge Valdes, distributed under the [Apache License v.2.0][5], and is currently being distributed as a package by Linux distros suck as [Debian][2]. 
+FuzzyOcr is a plugin for [SpamAssassin][1] written by Christian Holler and Jorge Valdes, distributed under the [Apache License v.2.0][5], and is currently being distributed as a package by Linux distros such as [Debian][2]. 
 
 # Disclaimer
 I am neither of the creators.
